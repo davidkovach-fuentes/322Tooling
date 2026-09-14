@@ -1,0 +1,128 @@
+program = WS_AND_COMMENTS (function WS)+ WS_AND_COMMENTS
+
+function = type WS name WS "(" WS parameters? WS ")" WS scope
+
+statement = decl
+          / new_array
+          / new_tuple
+          / length_expr
+          / array_write
+          / array_read
+          / assignment
+          / if
+          / while
+          / label_stmt
+          / scope
+          / statements
+
+# exprStmt
+
+statements = return
+          / break
+          / continue
+          / goto
+          / call
+
+label_stmt = label WS_AND_COMMENTS
+
+goto = "goto" WS label WS_AND_COMMENTS
+
+call = name "(" (expression (WS "," WS expression)*)? WS ")"
+
+assignment = variable WS "<-" WS expression WS_AND_COMMENTS
+
+index = "[" WS expression WS "]"
+
+array_access = variable index+
+
+args = expression (WS "," WS expression)*
+
+# ex. myArr <- new Array(5)
+new_array = variable WS "<-" WS "new" WS "Array" WS "(" WS args WS ")" WS_AND_COMMENTS
+
+# ex. t <- new Tuple(2)
+new_tuple = variable WS "<-" WS "new" WS "Tuple" WS "(" WS args WS ")" WS_AND_COMMENTS
+
+# ex. v <- myArr[0]
+array_read = variable WS "<-" WS array_access WS_AND_COMMENTS
+
+# ex. myArr[0] <- v
+array_write = array_access WS "<-" WS expression WS_AND_COMMENTS
+
+lenExpr = "length" WS variable (WS number)?
+
+length_expr = variable WS "<-" WS "length" WS variable (WS number)? WS_AND_COMMENTS
+
+unary = variable WS uop
+
+uop = "!" / "&" /"--" / "++"
+
+parameters = parameter (WS "," WS parameter)*
+
+parameter = type WS variable
+
+# ex. int64 myVar1
+decl = type WS variable (WS "," WS variable)* WS_AND_COMMENTS
+
+while = "while" WS "(" expression ")" WS label WS label WS_AND_COMMENTS
+
+if = "if" WS "(" expression ")" WS label WS label WS_AND_COMMENTS
+
+bop = "+" / "-" / "*" / "/" / "%" / "&" / "|" / "^" / "<<" / ">>"
+
+cop = "==" / "!=" / "<=" / ">=" / "=" / "<" / ">"
+
+type = void / arraytype / tupletype / int64
+
+void = "void"
+
+int64 = "int64"
+
+tupletype = "tuple"
+
+# int64[]  int64[][]  int64[][][]  — must precede int64 in "type" so the
+# trailing brackets aren't left dangling and unparsed.
+arraytype = int64 (WS "[" WS "]")+
+
+scope = "{" WS (statement WS)* "}"
+
+return = "return" WS expression? WS
+
+break = "break" WS_AND_COMMENTS
+
+continue = "continue" WS_AND_COMMENTS
+
+# A condition (if/while) is just an expression: boolean literal, comparison,
+# or arithmetic — one optional comparison sits on top of an arithmetic chain.
+expression = arith (WS cop WS arith)?
+
+arith = operand (WS bop WS operand)*
+
+operand = number
+        / string
+        / boolean
+        / call
+        / variable
+        / unary
+
+variable = ~r"[a-zA-Z_][a-zA-Z0-9_]*"
+
+number = ~r"[+-]?[0-9]+(_[0-9]+)*"
+
+string = ~r'"([^"\\]|\\.)*"'
+
+name = ~r"[a-zA-Z_][a-zA-Z0-9_]*"
+
+boolean = true / false
+
+true = "true"
+
+false = "false"
+
+label = ":" name
+
+WS =  ~r"\s*"
+
+COMMENTS = "//" ~r"[^\n]*"
+
+WS_AND_COMMENTS = WS ( COMMENTS WS )*
