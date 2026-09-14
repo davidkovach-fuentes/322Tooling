@@ -55,7 +55,6 @@ def _var_name(var):
 
 
 class LBVisitor(NodeVisitor):
-
     def visit_program(self, node, visited_children):
         _, fn_pairs, _ = visited_children
         functions = [pair[0] for pair in fn_pairs]
@@ -94,31 +93,52 @@ class LBVisitor(NodeVisitor):
         first, rest = visited_children
         return [first] + [group[-1] for group in rest]
 
-    def visit_new_array(self, node, visited_children):
-        var = visited_children[0]
-        args_list = visited_children[10]
-        return ("new_array", _var_name(var), args_list)
+    def visit_lExpr(self, node, visited_children):
+        return _flatten_choice(visited_children)
 
-    def visit_new_tuple(self, node, visited_children):
-        var = visited_children[0]
-        args_list = visited_children[10]
-        return ("new_tuple", _var_name(var), args_list)
+    def visit_rExpr(self, node, visited_children):
+        return _flatten_choice(visited_children)
 
-    def visit_array_read(self, node, visited_children):
-        var, _, _, _, access, _ = visited_children
-        _, arr_name, indices = access
-        return ("array_read", _var_name(var), arr_name, indices)
+    def visit_newArrayExpr(self, node, visited_children):
+        _, _, _, _, _, _, args_list, _, _ = visited_children
+        return ("new_array_expr", args_list)
 
-    def visit_array_write(self, node, visited_children):
-        access, _, _, _, expr, _ = visited_children
-        _, arr_name, indices = access
-        return ("array_write", arr_name, indices, expr)
+    def visit_newTupleExpr(self, node, visited_children):
+        _, _, _, _, _, _, args_list, _, _ = visited_children
+        return ("new_tuple_expr", args_list)
 
-    def visit_length_expr(self, node, visited_children):
-        var, _, _, _, _, _, arr_var, dim_opt, _ = visited_children
+    def visit_lenExpr(self, node, visited_children):
+        _, _, arr_var, dim_opt = visited_children
         dim_group = _optional(dim_opt)
         dim_expr = dim_group[-1] if dim_group else None
-        return ("length", _var_name(var), _var_name(arr_var), dim_expr)
+        return ("len_expr", _var_name(arr_var), dim_expr)
+
+    def visit_assign_stmt(self, node, visited_children):
+        left, _, _, _, right, _ = visited_children
+
+        if isinstance(right, tuple) and right[:1] == ("new_array_expr",):
+            return ("new_array", _var_name(left), right[1])
+        if isinstance(right, tuple) and right[:1] == ("new_tuple_expr",):
+            return ("new_tuple", _var_name(left), right[1])
+        if isinstance(right, tuple) and right[:1] == ("len_expr",):
+            _, arr_name, dim_expr = right
+            return ("length", _var_name(left), arr_name, dim_expr)
+        if isinstance(right, tuple) and right[:1] == ("array_access",):
+            _, arr_name, indices = right
+            return ("array_read", _var_name(left), arr_name, indices)
+        if isinstance(left, tuple) and left[:1] == ("array_access",):
+            _, arr_name, indices = left
+            return ("array_write", arr_name, indices, right)
+        return ("assign", _var_name(left), right)
+
+    def visit_incdec(self, node, visited_children):
+        return node.text
+
+    def visit_unary_stmt(self, node, visited_children):
+        var, _, op, _ = visited_children
+        name = _var_name(var)
+        bop = "+" if op == "++" else "-"
+        return ("assign", name, ("binary", ("var", name), bop, ("int", 1)))
 
     def visit_parameters(self, node, visited_children):
         first, rest = visited_children
@@ -149,10 +169,6 @@ class LBVisitor(NodeVisitor):
 
     def visit_statements(self, node, visited_children):
         return _flatten_choice(visited_children)
-
-    def visit_assignment(self, node, visited_children):
-        var, _, _, _, expr, _ = visited_children
-        return ("assign", _var_name(var), expr)
 
     def visit_if(self, node, visited_children):
         _, _, _, cond, _, _, tlabel, _, flabel, _ = visited_children
@@ -192,7 +208,7 @@ class LBVisitor(NodeVisitor):
         return ("call", name, arglist)
 
     def visit_return(self, node, visited_children):
-        _, _, expr_opt, _ = visited_children
+        _, expr_opt, _ = visited_children
         return ("return", _optional(expr_opt))
 
     def visit_expression(self, node, visited_children):
@@ -241,7 +257,6 @@ class LBVisitor(NodeVisitor):
 
     def generic_visit(self, node, visited_children):
         return visited_children or node
-
 
 def interpret(source):
     """Parse source and return the tuple AST."""

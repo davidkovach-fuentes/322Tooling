@@ -3,24 +3,18 @@ program = WS_AND_COMMENTS (function WS)+ WS_AND_COMMENTS
 function = type WS name WS "(" WS parameters? WS ")" WS scope
 
 statement = decl
-          / new_array
-          / new_tuple
-          / length_expr
-          / array_write
-          / array_read
-          / assignment
+          / assign_stmt
           / if
           / while
           / label_stmt
           / scope
           / statements
 
-# exprStmt
-
 statements = return
           / break
           / continue
           / goto
+          / unary_stmt
           / call
 
 label_stmt = label WS_AND_COMMENTS
@@ -29,7 +23,10 @@ goto = "goto" WS label WS_AND_COMMENTS
 
 call = name "(" (expression (WS "," WS expression)*)? WS ")"
 
-assignment = variable WS "<-" WS expression WS_AND_COMMENTS
+# ex. myVar++  fooBar()  — expression statements per GRAMMAR.md's summary.
+unary_stmt = variable WS incdec WS_AND_COMMENTS
+
+incdec = "++" / "--"
 
 index = "[" WS expression WS "]"
 
@@ -37,21 +34,25 @@ array_access = variable index+
 
 args = expression (WS "," WS expression)*
 
+# VAR <- EXPR, per GRAMMAR.md's "VAR <- EXP" simplification. Covers plain
+# assignment, array-element writes/reads, array/tuple allocation, and
+# length in one production.
+assign_stmt = lExpr WS "<-" WS rExpr WS_AND_COMMENTS
+
+lExpr = array_access / variable
+
+rExpr = newArrayExpr / newTupleExpr / lenExpr / array_access / expression
+
 # ex. myArr <- new Array(5)
-new_array = variable WS "<-" WS "new" WS "Array" WS "(" WS args WS ")" WS_AND_COMMENTS
+newArrayExpr = "new" WS "Array" WS "(" WS args WS ")"
 
 # ex. t <- new Tuple(2)
-new_tuple = variable WS "<-" WS "new" WS "Tuple" WS "(" WS args WS ")" WS_AND_COMMENTS
+newTupleExpr = "new" WS "Tuple" WS "(" WS args WS ")"
 
-# ex. v <- myArr[0]
-array_read = variable WS "<-" WS array_access WS_AND_COMMENTS
-
-# ex. myArr[0] <- v
-array_write = array_access WS "<-" WS expression WS_AND_COMMENTS
-
-lenExpr = "length" WS variable (WS number)?
-
-length_expr = variable WS "<-" WS "length" WS variable (WS number)? WS_AND_COMMENTS
+# ex. capacity <- length ptr 0 / length ptr myVar / length ptr fooBar()
+# "_" (same-line whitespace) keeps an omitted dim from swallowing the next
+# statement across a newline — see "_" below.
+lenExpr = "length" WS variable (_ operand)?
 
 unary = variable WS uop
 
@@ -86,7 +87,9 @@ arraytype = int64 (WS "[" WS "]")+
 
 scope = "{" WS (statement WS)* "}"
 
-return = "return" WS expression? WS
+# "_" (not WS) for the optional trailing expression: it can't cross a
+# newline, so an omitted return value can never eat the next statement.
+return = "return" (_ expression)? WS_AND_COMMENTS
 
 break = "break" WS_AND_COMMENTS
 
@@ -122,6 +125,9 @@ false = "false"
 label = ":" name
 
 WS =  ~r"\s*"
+
+# Same-line-only whitespace. Never crosses a newline, unlike WS.
+_ = ~r"[ \t]*"
 
 COMMENTS = "//" ~r"[^\n]*"
 

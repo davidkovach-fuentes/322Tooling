@@ -29,9 +29,9 @@ The design ideally mirrors the grammar of the provided language documentation.
 
 Do not perform any actions that are not requested. If you are unsure, ask for clarification.
 
-Do not provide long explanations or summaries. Only provide relevant information.
+Do not provide long explanations or summaries regarding changes. Only provide relevant information.
 
-Do not provide summaries of code or documentation.
+Do not provide summaries of code or documentation unless explicitly requested.
 
 Do not scan the directory structure or provide boilerplate code unless explicitly requested.
 
@@ -47,7 +47,7 @@ Follow readable code style, formatting, and industry practices. Refer to the use
     markdown.
 
 
--   **Verification**: Always run relevant tests.
+-   **Testing**: Do not test unless explicitly requested. The user will provide testing instructions.
 
 
 - **Git**: Do not push directly. Do not co-author commits.
