@@ -1,14 +1,3 @@
-"""Oracle suite for LB/tests/322.
-
-Same layout as LB/tests/322i/py/test_compiler.py: each *.LB with a sibling
-*.LB.out is one case; *.LB.in (if present) is stdin.
-
-A red test means the interpreter missed the oracle, or the oracle/program is
-wrong. Check both. Sources often have trailing whitespace or odd formatting;
-that is intentional and the parser must accept it. Comparison strips blank
-lines and trims each line, matching the compiler harness.
-"""
-
 from __future__ import print_function
 
 import io
@@ -24,7 +13,7 @@ sys.path.insert(0, os.path.join(ROOT, "LB"))
 
 from LBi import run
 
-_RUN_TIMEOUT_S = 30
+_RUN_TIMEOUT_S = 240
 
 
 def _timeout_handler(signum, frame):

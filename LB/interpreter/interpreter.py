@@ -1,6 +1,9 @@
-import random
+from __future__ import print_function
+
+import array as _array
+import sys
 import typing
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple as PyTuple
 
 try:
     from typing import TypedDict
@@ -11,6 +14,13 @@ except ImportError:
 
 
 Meta = typing.NamedTuple("Meta", [("line", int), ("column", int)])
+
+
+def _to_int64(val: int) -> int:
+    val = val & 0xFFFFFFFFFFFFFFFF
+    if val >= 0x8000000000000000:
+        val -= 0x10000000000000000
+    return val
 
 
 class LanguageError(Exception):
@@ -24,7 +34,7 @@ class LanguageError(Exception):
 
 
 class CallsDict(TypedDict):
-    calls: List[Tuple[int, float]]
+    calls: List[PyTuple[int, float]]
 
 
 class Token:
@@ -40,22 +50,18 @@ class Token:
         return self.value == other
 
     def __str__(self):
-        """String representation of the class instance.
-        Examples:
-            Token(INTEGER, 3)
-            Token(PLUS, '+')
-            Token(MUL, '*')
-        """
         return "Token({type}, {value}, {meta})".format(
             type=self.type, value=repr(self.value), meta=self.meta
         )
 
 
 class Scope(object):
-    def __init__(self, scope_name, parent_scope=None):
+    __slots__ = ("scope_name", "parent_scope", "_values")
+
+    def __init__(self, scope_name="", parent_scope=None):
         self.scope_name = scope_name
         self.parent_scope = parent_scope
-        self._values = dict()
+        self._values = {}
 
     def __setitem__(self, key, value):
         self._values[key] = value
@@ -66,48 +72,33 @@ class Scope(object):
     def __contains__(self, key):
         return key in self._values
 
-    def __repr__(self):
-        lines = ["{}:{}".format(key, val) for key, val in self._values.items()]
-        title = "{}\n".format(self.scope_name)
-        return title + "\n".join(lines)
-
 
 class Frame(object):
+    __slots__ = ("frame_name", "current_scope", "scopes")
+
     def __init__(self, frame_name, global_scope):
         self.frame_name = frame_name
-        self.current_scope = Scope("{}.scope_00".format(frame_name), global_scope)
+        self.current_scope = Scope(frame_name, global_scope)
         self.scopes = [self.current_scope]
 
     def new_scope(self):
-        self.current_scope = Scope(
-            "{}{:02d}".format(
-                self.current_scope.scope_name[:-2],
-                int(self.current_scope.scope_name[-2:]) + 1,
-            ),
-            self.current_scope,
-        )
+        self.current_scope = Scope("", self.current_scope)
         self.scopes.append(self.current_scope)
 
     def del_scope(self):
         current_scope = self.current_scope
         self.current_scope = current_scope.parent_scope
-        self.scopes.pop(-1)
-        del current_scope
+        self.scopes.pop()
 
     def __contains__(self, key):
         return key in self.current_scope
 
-    def __repr__(self):
-        lines = ["{}\n{}".format(scope, "-" * 40) for scope in self.scopes]
-
-        title = "Frame: {}\n{}\n".format(self.frame_name, "*" * 40)
-
-        return title + "\n".join(lines)
-
 
 class Stack(object):
+    __slots__ = ("frames", "current_frame")
+
     def __init__(self):
-        self.frames = list()
+        self.frames = []
         self.current_frame = None
 
     def __bool__(self):
@@ -119,39 +110,53 @@ class Stack(object):
         self.current_frame = frame
 
     def del_frame(self):
-        self.frames.pop(-1)
-        self.current_frame = len(self.frames) and self.frames[-1] or None
-
-    def __repr__(self):
-        lines = ["{}".format(frame) for frame in self.frames]
-        return "\n".join(lines)
+        self.frames.pop()
+        self.current_frame = self.frames[-1] if self.frames else None
 
 
 class Memory(object):
+    __slots__ = ("global_frame", "stack")
+
     def __init__(self):
         self.global_frame = Frame("GLOBAL_MEMORY", None)
         self.stack = Stack()
 
     def declare(self, key, value=0):
-        ins_scope = (
+        curr_scope = (
             self.stack.current_frame.current_scope
             if self.stack.current_frame
             else self.global_frame.current_scope
         )
-        ins_scope[key] = value
+        curr_scope._values[key] = value
 
     def __setitem__(self, key, value):
-        ins_scope = (
+        curr_scope = (
             self.stack.current_frame.current_scope
             if self.stack.current_frame
             else self.global_frame.current_scope
         )
-        curr_scope = ins_scope
-        while curr_scope and key not in curr_scope:
-            urr_scope = curr_scope.parent_scope
-        if curr_scope is None:
-            raise LanguageError(0, 0, f"assignment to undeclared variable {key!r}")
-        curr_scope[key] = value
+        if key in curr_scope._values:
+            curr_scope._values[key] = value
+            return
+        s = curr_scope
+        while s is not None:
+            if key in s._values:
+                s._values[key] = value
+                return
+            s = s.parent_scope
+        curr_scope._values[key] = value
+
+    def __contains__(self, item):
+        curr_scope = (
+            self.stack.current_frame.current_scope
+            if self.stack.current_frame
+            else self.global_frame.current_scope
+        )
+        while curr_scope is not None:
+            if item in curr_scope._values:
+                return True
+            curr_scope = curr_scope.parent_scope
+        return False
 
     def __getitem__(self, item):
         curr_scope = (
@@ -159,9 +164,14 @@ class Memory(object):
             if self.stack.current_frame
             else self.global_frame.current_scope
         )
-        while curr_scope and item not in curr_scope:
-            curr_scope = curr_scope.parent_scope
-        return curr_scope[item]
+        if item in curr_scope._values:
+            return curr_scope._values[item]
+        s = curr_scope.parent_scope
+        while s is not None:
+            if item in s._values:
+                return s._values[item]
+            s = s.parent_scope
+        return 0
 
     def new_frame(self, frame_name):
         self.stack.new_frame(frame_name, self.global_frame.current_scope)
@@ -170,16 +180,12 @@ class Memory(object):
         self.stack.del_frame()
 
     def new_scope(self):
-        self.stack.current_frame.new_scope()
+        if self.stack.current_frame:
+            self.stack.current_frame.new_scope()
 
     def del_scope(self):
-        self.stack.current_frame.del_scope()
-
-    def __repr__(self):
-        return "{}\nStack\n{}\n{}".format(self.global_frame, "=" * 40, self.stack)
-
-    def __str__(self):
-        return self.__repr__()
+        if self.stack.current_frame:
+            self.stack.current_frame.del_scope()
 
 
 class Node(object):
@@ -219,61 +225,124 @@ class Var(Node):
         self.value = token.value
 
 
-# IMPLEMENTING ARRAYS
-class ObjList(Node):
-    """LB array. Multi-dimensional arrays are nested ObjLists: dims[0] is
-    this array's own size, dims[1:] describes each element (itself an
-    ObjList) when len(dims) > 1."""
+class NDArray(Node):
+    _tag = "s"
 
     def __init__(self, dims, line=0):
         Node.__init__(self, line)
         if not dims:
             raise LanguageError(line, 0, "array must have at least one dimension")
-        self.size = dims[0]
-        if self.size < 0:
-            raise LanguageError(line, 0, f"array size {self.size} must be non-negative")
-        if len(dims) > 1:
-            self.items = [ObjList(dims[1:], line) for _ in range(self.size)]
-        else:
-            self.items = [0] * self.size
+        clean_dims = []
+        for d in dims:
+            d_val = d.address if isinstance(d, NDArray) else int(d)
+            if d_val < 0:
+                raise LanguageError(line, 0, f"array size {d_val} must be non-negative")
+            clean_dims.append(d_val)
+        self.shape = tuple(clean_dims)
+        self.strides = self._compute_strides(clean_dims)
+        self.ndim = len(clean_dims)
+        if self.ndim == 1:
+            self.stride0 = 1
+            self.dim0 = clean_dims[0]
+        elif self.ndim == 2:
+            self.stride0 = self.strides[0]
+            self.stride1 = self.strides[1]
+            self.dim0 = clean_dims[0]
+            self.dim1 = clean_dims[1]
 
-    def _check_bounds(self, index):
-        if not isinstance(index, int) or not (0 <= index < self.size):
+        total = 1
+        for d in clean_dims:
+            total *= d
+        self.data = [0] * total
+        self.address = (id(self) << 1) | 1
+
+    @staticmethod
+    def _compute_strides(dims):
+        strides = [1] * len(dims)
+        for i in range(len(dims) - 2, -1, -1):
+            strides[i] = strides[i + 1] * dims[i + 1]
+        return strides
+
+    @property
+    def size(self):
+        return self.shape[0]
+
+    def _flat_index(self, indices):
+        if len(indices) != len(self.shape):
             raise LanguageError(
-                self.line, 0, f"array index {index} out of bounds (size {self.size})"
+                self.line, 0,
+                f"expected {len(self.shape)} index/indices, got {len(indices)}",
             )
+        flat = 0
+        for idx, dim, stride in zip(indices, self.shape, self.strides):
+            idx_val = idx.address if isinstance(idx, NDArray) else int(idx)
+            if not (0 <= idx_val < dim):
+                raise LanguageError(
+                    self.line, 0, f"array index {idx_val} out of bounds (size {dim})"
+                )
+            flat += idx_val * stride
+        return flat
 
-    def get(self, index):
-        self._check_bounds(index)
-        return self.items[index]
+    def get(self, *indices):
+        if len(indices) == 2:
+            i0, i1 = indices
+            i0 = i0.address if type(i0) is NDArray else i0
+            i1 = i1.address if type(i1) is NDArray else i1
+            if not (0 <= i0 < self.dim0 and 0 <= i1 < self.dim1):
+                raise LanguageError(self.line, 0, "array index out of bounds")
+            return self.data[i0 * self.stride0 + i1]
+        elif len(indices) == 1:
+            i0 = indices[0]
+            i0 = i0.address if type(i0) is NDArray else i0
+            if not (0 <= i0 < self.dim0):
+                raise LanguageError(self.line, 0, "array index out of bounds")
+            return self.data[i0]
+        return self.data[self._flat_index(indices)]
 
-    def set(self, index, value):
-        self._check_bounds(index)
-        self.items[index] = value
+    def set(self, *indices_and_value):
+        if len(indices_and_value) == 3:
+            i0, i1, value = indices_and_value
+            i0 = i0.address if type(i0) is NDArray else i0
+            i1 = i1.address if type(i1) is NDArray else i1
+            if not (0 <= i0 < self.dim0 and 0 <= i1 < self.dim1):
+                raise LanguageError(self.line, 0, "array index out of bounds")
+            val = value if type(value) in (NDArray, Tuple) else _to_int64(int(value))
+            self.data[i0 * self.stride0 + i1] = val
+        elif len(indices_and_value) == 2:
+            i0, value = indices_and_value
+            i0 = i0.address if type(i0) is NDArray else i0
+            if not (0 <= i0 < self.dim0):
+                raise LanguageError(self.line, 0, "array index out of bounds")
+            val = value if type(value) in (NDArray, Tuple) else _to_int64(int(value))
+            self.data[i0] = val
+        else:
+            *indices, value = indices_and_value
+            val = value if type(value) in (NDArray, Tuple) else _to_int64(int(value))
+            self.data[self._flat_index(indices)] = val
 
     def length(self, dim=0):
-        if dim == 0:
-            return self.size
-        if self.size == 0 or not isinstance(self.items[0], ObjList):
-            raise LanguageError(self.line, 0, f"array does not have dimension {dim}")
-        return self.items[0].length(dim - 1)
+        dim_val = dim.address if isinstance(dim, NDArray) else int(dim)
+        if not (0 <= dim_val < len(self.shape)):
+            return 0
+        return self.shape[dim_val]
 
     def __repr__(self):
-        slots = [str(self.size)]
-        for item in self.items:
-            slots.append(repr(item) if isinstance(item, ObjList) else str(item))
+        slots = [str(d) for d in self.shape] + [
+            repr(v) if isinstance(v, (NDArray, Tuple)) else str(v)
+            for v in self.data
+        ]
         return "{{{}:{}, {}}}".format(self._tag, len(slots), ", ".join(slots))
 
+
+class Tuple(NDArray):
     _tag = "s"
 
-
-# IMPLEMENTING TUPLES
-class Tuple(ObjList):
-    """LB tuple. Backed by the same fixed-size storage as ObjList — same
-    allocation, bounds-checked get/set, and length() — since a tuple is
-    just a flat, non-nested fixed-size container in LB."""
-
-    _tag = "t"
+    def __repr__(self):
+        slots = [
+            repr(v) if isinstance(v, (NDArray, Tuple)) else str(v)
+            for v in self.data
+        ]
+        return "{{{}:{}, {}}}".format(self._tag, len(slots), ", ".join(slots))
 
 
 class BinOp(Node):
@@ -318,7 +387,7 @@ class FunctionCall(Node):
     def __init__(self, name, args, line):
         Node.__init__(self, line)
         self.name = name
-        self.args = args  # a list of Param nodes
+        self.args = args
 
 
 class IfStmt(Node):
@@ -394,7 +463,7 @@ class FunctionDecl(Node):
         Node.__init__(self, line)
         self.type_node = type_node
         self.func_name = func_name
-        self.params = params  # a list of Param nodes
+        self.params = params
         self.body = body
 
 
@@ -410,13 +479,6 @@ class Program(Node):
         self.children = declarations
 
 
-###############################################################################
-#                                                                             #
-#  AST visitors (walkers)                                                     #
-#                                                                             #
-###############################################################################
-
-
 class NodeVisitor(object):
     def visit(self, node):
         method_name = "visit_" + type(node).__name__
@@ -425,3 +487,318 @@ class NodeVisitor(object):
 
     def generic_visit(self, node):
         raise Exception("No visit_{} method".format(type(node).__name__))
+
+
+def _flatten_stmts(stmts, out):
+    for stmt in stmts:
+        if stmt[0] == "scope":
+            _flatten_stmts(stmt[1], out)
+        else:
+            out.append(stmt)
+
+
+def _compile_fn(fn_ast):
+    _, ret_type, name, params, body = fn_ast
+    raw_stmts = body[1] if body[0] == "scope" else [body]
+    flat = []
+    _flatten_stmts(raw_stmts, flat)
+
+    label_map = {}
+    code = []
+    for stmt in flat:
+        if stmt[0] == "label":
+            label_map[stmt[1]] = len(code)
+        else:
+            code.append(stmt)
+
+    resolved_code = []
+    for stmt in code:
+        tag = stmt[0]
+        if tag == "if":
+            resolved_code.append(("if", stmt[1], label_map[stmt[2]], label_map[stmt[3]]))
+        elif tag == "while":
+            resolved_code.append(("while", stmt[1], label_map[stmt[2]], label_map[stmt[3]]))
+        elif tag == "goto":
+            resolved_code.append(("goto", label_map[stmt[1]]))
+        else:
+            resolved_code.append(stmt)
+
+    return params, resolved_code
+
+
+def eval_expr(expr, env, globals_dict, interpreter):
+    t = type(expr)
+    if t is int:
+        return expr
+    if t is str:
+        return env[expr] if expr in env else globals_dict.get(expr, 0)
+    if t is not tuple:
+        return expr
+
+    tag = expr[0]
+
+    if tag == "var":
+        v = expr[1]
+        return env[v] if v in env else (globals_dict[v] if v in globals_dict else interpreter.memory[v])
+
+    if tag == "int":
+        return expr[1]
+
+    if tag == "binary":
+        lval = eval_expr(expr[1], env, globals_dict, interpreter)
+        rval = eval_expr(expr[3], env, globals_dict, interpreter)
+        op = expr[2]
+
+        if type(lval) is int and type(rval) is int:
+            if op == "+":
+                res = lval + rval
+                if res > 9223372036854775807 or res < -9223372036854775808:
+                    res = (res & 0xFFFFFFFFFFFFFFFF)
+                    if res >= 0x8000000000000000:
+                        res -= 0x10000000000000000
+                return res
+            if op == "-":
+                res = lval - rval
+                if res > 9223372036854775807 or res < -9223372036854775808:
+                    res = (res & 0xFFFFFFFFFFFFFFFF)
+                    if res >= 0x8000000000000000:
+                        res -= 0x10000000000000000
+                return res
+            if op == "*":
+                res = lval * rval
+                if res > 9223372036854775807 or res < -9223372036854775808:
+                    res = (res & 0xFFFFFFFFFFFFFFFF)
+                    if res >= 0x8000000000000000:
+                        res -= 0x10000000000000000
+                return res
+            if op in ("==", "="):
+                return 1 if lval == rval else 0
+            if op == "<":
+                return 1 if lval < rval else 0
+            if op == "<=":
+                return 1 if lval <= rval else 0
+            if op == ">":
+                return 1 if lval > rval else 0
+            if op == ">=":
+                return 1 if lval >= rval else 0
+            if op == "!=":
+                return 1 if lval != rval else 0
+            if op == "&":
+                return lval & rval
+            if op == "/":
+                return (lval // rval) if rval != 0 else 0
+            if op == "%":
+                return (lval % rval) if rval != 0 else 0
+            if op == "|":
+                return lval | rval
+            if op == "^":
+                return lval ^ rval
+            if op == "<<":
+                res = lval << (rval & 63)
+                if res > 9223372036854775807 or res < -9223372036854775808:
+                    res = (res & 0xFFFFFFFFFFFFFFFF)
+                    if res >= 0x8000000000000000:
+                        res -= 0x10000000000000000
+                return res
+            if op == ">>":
+                return lval >> (rval & 63)
+
+        return interpreter._eval_bop(lval, op, rval)
+
+    if tag == "array_read":
+        target = expr[1]
+        if type(target) is str:
+            arr = env[target] if target in env else (globals_dict[target] if target in globals_dict else interpreter.memory[target])
+        else:
+            arr = eval_expr(target, env, globals_dict, interpreter)
+        idx_vals = [eval_expr(i, env, globals_dict, interpreter) for i in expr[2]]
+        return arr.get(*idx_vals)
+
+    if tag == "bool":
+        return 1 if expr[1] else 0
+    if tag == "string":
+        return expr[1]
+
+    if tag == "length":
+        target = expr[2]
+        if type(target) is str:
+            arr = env[target] if target in env else (globals_dict[target] if target in globals_dict else interpreter.memory[target])
+        else:
+            arr = eval_expr(target, env, globals_dict, interpreter)
+        dim = eval_expr(expr[3], env, globals_dict, interpreter) if expr[3] is not None else 0
+        return arr.length(dim)
+
+    if tag == "call":
+        args = [eval_expr(e, env, globals_dict, interpreter) for e in expr[2]]
+        return interpreter.call_function(expr[1], args)
+
+    raise LanguageError(0, 0, f"Unknown expression tag {tag!r}")
+
+
+def exec_code(code, env, globals_dict, interpreter):
+    pc = 0
+    n_instr = len(code)
+    while pc < n_instr:
+        stmt = code[pc]
+        tag = stmt[0]
+
+        if tag == "assign":
+            var_name = stmt[1]
+            val = eval_expr(stmt[2], env, globals_dict, interpreter)
+            if var_name in env:
+                env[var_name] = val
+            elif var_name in globals_dict:
+                globals_dict[var_name] = val
+            else:
+                env[var_name] = val
+            pc += 1
+
+        elif tag == "if":
+            cond = eval_expr(stmt[1], env, globals_dict, interpreter)
+            pc = stmt[2] if cond else stmt[3]
+
+        elif tag == "while":
+            cond = eval_expr(stmt[1], env, globals_dict, interpreter)
+            pc = stmt[2] if cond else stmt[3]
+
+        elif tag == "goto":
+            pc = stmt[1]
+
+        elif tag == "decl":
+            env[stmt[2]] = 0
+            pc += 1
+
+        elif tag == "array_write":
+            target = stmt[1]
+            if type(target) is str:
+                arr = env[target] if target in env else (globals_dict[target] if target in globals_dict else interpreter.memory[target])
+            else:
+                arr = eval_expr(target, env, globals_dict, interpreter)
+            indices = [eval_expr(e, env, globals_dict, interpreter) for e in stmt[2]]
+            val = eval_expr(stmt[3], env, globals_dict, interpreter)
+            arr.set(*indices, val)
+            pc += 1
+
+        elif tag == "new_array":
+            dims = [eval_expr(e, env, globals_dict, interpreter) for e in stmt[2]]
+            env[stmt[1]] = NDArray(dims)
+            pc += 1
+
+        elif tag == "new_tuple":
+            dims = [eval_expr(e, env, globals_dict, interpreter) for e in stmt[2]]
+            env[stmt[1]] = Tuple(dims)
+            pc += 1
+
+        elif tag == "call":
+            args = [eval_expr(e, env, globals_dict, interpreter) for e in stmt[2]]
+            interpreter.call_function(stmt[1], args)
+            pc += 1
+
+        elif tag == "return":
+            expr = stmt[1]
+            return eval_expr(expr, env, globals_dict, interpreter) if expr is not None else None
+
+        elif tag in ("break", "continue", "label"):
+            pc += 1
+        else:
+            pc += 1
+    return None
+
+
+class Interpreter(object):
+    def __init__(self, ast):
+        self.ast = ast
+        self.memory = Memory()
+        self.compiled_functions = {}
+        self.globals = self.memory.global_frame.current_scope._values
+        self.runtime_functions = {
+            "print": self._builtin_print,
+            "input": self._builtin_input,
+        }
+
+    def run(self):
+        _, fns = self.ast
+        for fn in fns:
+            fn_name = fn[2]
+            self.compiled_functions[fn_name] = _compile_fn(fn)
+
+        if "main" not in self.compiled_functions:
+            raise LanguageError(0, 0, "Missing main function")
+
+        return self.call_function("main", [])
+
+    def _builtin_print(self, args):
+        for arg in args:
+            if isinstance(arg, (NDArray, Tuple)):
+                print(repr(arg))
+            elif isinstance(arg, bool):
+                print("1" if arg else "0")
+            else:
+                print(_to_int64(arg))
+        return 0
+
+    def _builtin_input(self, args):
+        val = input()
+        return _to_int64(int(val.strip()))
+
+    def call_function(self, name, args):
+        if name in self.runtime_functions:
+            return self.runtime_functions[name](args)
+
+        if name not in self.compiled_functions:
+            raise LanguageError(0, 0, f"Undefined function {name!r}")
+
+        params, code = self.compiled_functions[name]
+        if len(args) != len(params):
+            raise LanguageError(
+                0, 0, f"Function {name} expected {len(params)} args, got {len(args)}"
+            )
+
+        self.memory.new_frame(name)
+        curr_scope = self.memory.stack.current_frame.current_scope
+        env = curr_scope._values
+        for (_, _, p_name), arg_val in zip(params, args):
+            env[p_name] = arg_val
+
+        try:
+            return exec_code(code, env, self.globals, self)
+        finally:
+            self.memory.del_frame()
+
+    def _eval_bop(self, lval, op, rval):
+        lval = lval.address if isinstance(lval, NDArray) else int(lval)
+        rval = rval.address if isinstance(rval, NDArray) else int(rval)
+
+        if op == "+":
+            return _to_int64(lval + rval)
+        if op == "-":
+            return _to_int64(lval - rval)
+        if op == "*":
+            return _to_int64(lval * rval)
+        if op == "/":
+            return _to_int64(lval // rval) if rval != 0 else 0
+        if op == "%":
+            return _to_int64(lval % rval) if rval != 0 else 0
+        if op == "&":
+            return _to_int64(lval & rval)
+        if op == "|":
+            return _to_int64(lval | rval)
+        if op == "^":
+            return _to_int64(lval ^ rval)
+        if op == "<<":
+            return _to_int64(lval << (rval & 63))
+        if op == ">>":
+            return _to_int64(lval >> (rval & 63))
+        if op in ("==", "="):
+            return 1 if lval == rval else 0
+        if op == "!=":
+            return 1 if lval != rval else 0
+        if op == "<":
+            return 1 if lval < rval else 0
+        if op == "<=":
+            return 1 if lval <= rval else 0
+        if op == ">":
+            return 1 if lval > rval else 0
+        if op == ">=":
+            return 1 if lval >= rval else 0
+        raise LanguageError(0, 0, f"Unsupported binary operator {op!r}")

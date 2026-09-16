@@ -81,12 +81,16 @@ class LBVisitor(NodeVisitor):
     def visit_tupletype(self, node, visited_children):
         return "tuple"
 
+    def visit_codetype(self, node, visited_children):
+        return "code"
+
     def visit_index(self, node, visited_children):
         _, _, expr, _, _ = visited_children
         return expr
 
     def visit_array_access(self, node, visited_children):
-        var, indices = visited_children
+        var, index_groups = visited_children
+        indices = [group[-1] for group in index_groups]
         return ("array_access", _var_name(var), indices)
 
     def visit_args(self, node, visited_children):
@@ -170,12 +174,16 @@ class LBVisitor(NodeVisitor):
     def visit_statements(self, node, visited_children):
         return _flatten_choice(visited_children)
 
+    def visit_call_stmt(self, node, visited_children):
+        call_val, _ = visited_children
+        return call_val
+
     def visit_if(self, node, visited_children):
-        _, _, _, cond, _, _, tlabel, _, flabel, _ = visited_children
+        _, _, _, _, cond, _, _, _, tlabel, _, flabel, _ = visited_children
         return ("if", cond, tlabel, flabel)
 
     def visit_while(self, node, visited_children):
-        _, _, _, cond, _, _, blabel, _, elabel, _ = visited_children
+        _, _, _, _, cond, _, _, _, blabel, _, elabel, _ = visited_children
         return ("while", cond, blabel, elabel)
 
     def visit_goto(self, node, visited_children):
@@ -197,7 +205,7 @@ class LBVisitor(NodeVisitor):
         return ("continue",)
 
     def visit_call(self, node, visited_children):
-        name, _, args_opt, _, _ = visited_children
+        name, _, _, _, args_opt, _, _ = visited_children
         arglist = []
         inner = _optional(args_opt)
         if inner is not None:
@@ -209,7 +217,9 @@ class LBVisitor(NodeVisitor):
 
     def visit_return(self, node, visited_children):
         _, expr_opt, _ = visited_children
-        return ("return", _optional(expr_opt))
+        group = _optional(expr_opt)
+        expr_val = group[-1] if group is not None else None
+        return ("return", expr_val)
 
     def visit_expression(self, node, visited_children):
         left, cop_opt = visited_children
@@ -245,6 +255,9 @@ class LBVisitor(NodeVisitor):
 
     def visit_false(self, node, visited_children):
         return ("bool", False)
+
+    def visit_string(self, node, visited_children):
+        return ("string", node.text[1:-1])
 
     def visit_variable(self, node, visited_children):
         return ("var", node.text)
