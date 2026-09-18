@@ -5,7 +5,8 @@ from pathlib import Path
 
 from parsimonious.grammar import Grammar
 from parsimonious.nodes import NodeVisitor
-from interpreter.main import Interpreter
+from interpreter.compiler import compile_program
+from interpreter.vm import VM
 
 
 _GRAMMAR_PATH = Path(__file__).with_name("LB.PEG")
@@ -17,6 +18,16 @@ def parse(source):
 
 
 def run(source):
+    functions = compile_program(interpret(source))
+    vm = VM(functions)
+    if "main" not in functions:
+        raise LanguageError(0, 0, "Missing main function")
+    return vm.call_function("main", [])
+
+
+def run_ast_interpreter(source):
+    from interpreter.main import Interpreter
+
     return Interpreter(interpret(source)).run()
 
 
@@ -33,6 +44,16 @@ def main(argv=None):
     else:
         run(source)
     return 0
+
+
+class LanguageError(Exception):
+    def __init__(self, line: int, column: int, message: str):
+        self.line = line
+        self.column = column
+        self.message = message
+
+    def __str__(self) -> str:
+        return f"{self.line}:{self.column} [error] {self.message}"
 
 
 def _flatten_choice(visited_children):
@@ -90,7 +111,7 @@ class LBVisitor(NodeVisitor):
 
     def visit_array_access(self, node, visited_children):
         var, index_groups = visited_children
-        indices = [group[-1] for group in index_groups]
+        indices = list(index_groups)
         return ("array_access", _var_name(var), indices)
 
     def visit_args(self, node, visited_children):
@@ -205,7 +226,7 @@ class LBVisitor(NodeVisitor):
         return ("continue",)
 
     def visit_call(self, node, visited_children):
-        name, _, _, _, args_opt, _, _ = visited_children
+        name, _, _, args_opt, _, _ = visited_children
         arglist = []
         inner = _optional(args_opt)
         if inner is not None:

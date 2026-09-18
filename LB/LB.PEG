@@ -1,4 +1,4 @@
-program = WS (function WS)+ WS
+program = WS_AND_COMMENTS (function WS_AND_COMMENTS)+ WS_AND_COMMENTS
 
 function = type WS name WS "(" WS parameters? WS ")" WS scope
 
@@ -15,47 +15,34 @@ statements = return
           / continue
           / goto
           / unary_stmt
-          / call_stmt
+          / call
 
-label_stmt = label WS
+label_stmt = label WS_AND_COMMENTS
 
-goto = "goto" WS label WS
+goto = "goto" WS label WS_AND_COMMENTS
 
-# call as a standalone statement must swallow its own trailing
-# whitespace/comments, same as every other statement kind — "call" itself
-# (below) stays bare since it's also used inside expressions.
-call_stmt = call WS
+call = name WS "(" (expression (WS "," WS expression)*)? WS ")"
 
-call = name WS "(" WS (expression (WS "," WS expression)*)? WS ")"
-
-unary_stmt = variable WS incdec WS
+unary_stmt = variable WS incdec WS_AND_COMMENTS
 
 incdec = "++" / "--"
 
 index = "[" WS expression WS "]"
 
-array_access = variable (WS index)+
+array_access = variable index+
 
 args = expression (WS "," WS expression)*
 
-# VAR <- EXPR, per GRAMMAR.md's "VAR <- EXP" simplification. Covers plain
-# assignment, array-element writes/reads, array/tuple allocation, and
-# length in one production.
-assign_stmt = lExpr WS "<-" WS rExpr WS
+assign_stmt = lExpr WS "<-" WS rExpr WS_AND_COMMENTS
 
 lExpr = array_access / variable
 
 rExpr = newArrayExpr / newTupleExpr / lenExpr / array_access / expression
 
-# ex. myArr <- new Array(5)
 newArrayExpr = "new" WS "Array" WS "(" WS args WS ")"
 
-# ex. t <- new Tuple(2)
 newTupleExpr = "new" WS "Tuple" WS "(" WS args WS ")"
 
-# ex. capacity <- length ptr 0 / length ptr myVar / length ptr fooBar()
-# "_" (same-line whitespace) keeps an omitted dim from swallowing the next
-# statement across a newline — see "_" below.
 lenExpr = "length" WS variable (_ operand)?
 
 unary = variable WS uop
@@ -66,12 +53,11 @@ parameters = parameter (WS "," WS parameter)*
 
 parameter = type WS variable
 
-# ex. int64 myVar1
-decl = type WS variable (WS "," WS variable)* WS
+decl = type WS variable (WS "," WS variable)* WS_AND_COMMENTS
 
-while = "while" WS "(" WS expression WS ")" WS label WS label WS
+while = "while" WS "(" WS expression WS ")" WS label WS label WS_AND_COMMENTS
 
-if = "if" WS "(" WS expression WS ")" WS label WS label WS
+if = "if" WS "(" WS expression WS ")" WS label WS label WS_AND_COMMENTS
 
 bop = "+" / "-" / "*" / "/" / "%" / "&" / "|" / "^" / "<<" / ">>"
 
@@ -87,22 +73,16 @@ int64 = "int64"
 
 tupletype = "tuple"
 
-# int64[]  int64[][]  int64[][][]  — must precede int64 in "type" so the
-# trailing brackets aren't left dangling and unparsed.
 arraytype = int64 (WS "[" WS "]")+
 
-scope = "{" WS (statement WS)* "}"
+scope = "{" WS_AND_COMMENTS (statement WS_AND_COMMENTS)* "}"
 
-# "_" (not WS) for the optional trailing expression: it can't cross a
-# newline, so an omitted return value can never eat the next statement.
-return = "return" (_ expression)? WS
+return = "return" (_ expression)? WS_AND_COMMENTS
 
-break = "break" WS
+break = "break" WS_AND_COMMENTS
 
-continue = "continue" WS
+continue = "continue" WS_AND_COMMENTS
 
-# A condition (if/while) is just an expression: boolean literal, comparison,
-# or arithmetic — one optional comparison sits on top of an arithmetic chain.
 expression = arith (WS cop WS arith)?
 
 arith = operand (WS bop WS operand)*
@@ -130,17 +110,10 @@ false = "false"
 
 label = ":" name
 
-# Insignificant whitespace AND comments — matches anywhere statements,
-# arguments, or declarations are separated. Crosses newlines freely, so a
-# standalone comment line (leading a scope, between functions, trailing a
-# call statement) is always absorbed, not just whitespace.
-WS = WS0 (COMMENTS WS0)*
+WS =  ~r"\s*"
 
-WS0 = ~r"\s*"
-
-# Same-line-only whitespace. Never crosses a newline, unlike WS — kept
-# separate deliberately so an omitted optional trailing value (return's
-# expression, length's dim) can never reach onto the next statement.
 _ = ~r"[ \t]*"
 
 COMMENTS = "//" ~r"[^\n]*"
+
+WS_AND_COMMENTS = WS ( COMMENTS WS )*

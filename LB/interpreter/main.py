@@ -20,9 +20,7 @@ class Flattener:
         self.instrs = []
         self.label_table = {}
         self.patches = []
-        # (while_instr_idx, blabel_name, elabel_name) per while loop seen.
         self.while_specs = []
-        # instr indices of not-yet-resolved ["break", None] / ["continue", None]
         self.break_positions = []
         self.continue_positions = []
         self._flatten_scope(body)
